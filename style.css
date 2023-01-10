@@ -1,0 +1,14 @@
+* {
+  margin: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: black;
+  width: 100vw;
+  height: 100vh;
+}
+
+.player {
+  background-color: whitesmoke;
+}
