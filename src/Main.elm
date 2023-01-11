@@ -3,11 +3,13 @@ module Main exposing (main)
 import Browser exposing (Document)
 import Browser.Dom exposing (Viewport, getViewport)
 import Browser.Events exposing (onAnimationFrame, onKeyDown, onResize)
-import Canvas exposing (clear, rect, shapes)
-import Canvas.Settings exposing (fill)
+import Canvas exposing (clear, shapes)
 import Color
+import Config
 import Json.Decode as Decode exposing (Decoder)
+import Object exposing (Object)
 import Task
+import Vector
 
 
 main : Program () Model Msg
@@ -24,17 +26,7 @@ type alias Model =
     { player : Object
     , scene : Scene
     , enemies : List Object
-    , enemiesPos : { x : Float, y : Float }
-    , enemiesDelta : { x : Float, y : Float }
     , missile : Maybe Object
-    }
-
-
-type alias Object =
-    { x : Float
-    , y : Float
-    , width : Float
-    , height : Float
     }
 
 
@@ -44,54 +36,47 @@ type alias Scene =
     }
 
 
-enemiesGap : Float
-enemiesGap =
-    20
+initEnemies : List Object
+initEnemies =
+    List.repeat (Config.rows * Config.cols) 0
+        |> List.indexedMap
+            (\i _ ->
+                let
+                    row =
+                        i // Config.cols
+
+                    col =
+                        i - (row * Config.cols)
+
+                    x =
+                        toFloat col * (Config.enemySize + Config.enemiesGap)
+
+                    y =
+                        toFloat row * (Config.enemySize + Config.enemiesGap)
+                in
+                Object.make
+                    (Vector.make x y)
+                    Config.enemyVelocity
+                    Config.enemySize
+                    Config.enemySize
+            )
 
 
-enemySize : Float
-enemySize =
-    50
+initPlayer : Object
+initPlayer =
+    Object.withWidthAndHeight Config.playerVelocity Config.playerWidth Config.playerHeight
 
 
-rows : Int
-rows =
-    5
-
-
-cols : Int
-cols =
-    11
-
-
-enemiesGroupWidth : Float
-enemiesGroupWidth =
-    toFloat cols * (enemySize + enemiesGap)
+initScene : Scene
+initScene =
+    { width = 0, height = 0 }
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { player = { x = 0, y = 0, width = 100, height = 30 }
-      , scene = { width = 0, height = 0 }
-      , enemies =
-            List.repeat (rows * cols) 0
-                |> List.indexedMap
-                    (\i _ ->
-                        let
-                            row =
-                                i // cols
-
-                            col =
-                                i - (row * cols)
-                        in
-                        { x = toFloat col * (enemySize + enemiesGap)
-                        , y = toFloat row * (enemySize + enemiesGap)
-                        , width = enemySize
-                        , height = enemySize
-                        }
-                    )
-      , enemiesPos = { x = 0, y = 0 }
-      , enemiesDelta = { x = 1, y = 1 }
+    ( { player = initPlayer
+      , scene = initScene
+      , enemies = initEnemies
       , missile = Nothing
       }
     , Task.perform GotViewPort getViewport
@@ -99,70 +84,39 @@ init _ =
 
 
 type Msg
-    = NoOp
-    | GotViewPort Viewport
+    = GotViewPort Viewport
     | SceneResize Int Int
     | MovePlayer Direction
     | Tick
 
 
-scenePadding : Float
-scenePadding =
-    100
+updateWidthAndHeight : Float -> Float -> Model -> Model
+updateWidthAndHeight width height model =
+    let
+        newScene =
+            { width = width - Config.scenePadding
+            , height = height - Config.scenePadding
+            }
+
+        newPlayerPos =
+            Vector.make 0 (newScene.height - Config.playerHeight)
+    in
+    { model
+        | scene = newScene
+        , player = Object.withPos newPlayerPos model.player
+    }
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        NoOp ->
-            ( model, Cmd.none )
-
         GotViewPort { scene } ->
-            let
-                newScene =
-                    { width = scene.width - scenePadding
-                    , height = scene.height - scenePadding
-                    }
-
-                player =
-                    model.player
-
-                newPlayer =
-                    { player
-                        | y = newScene.height - player.height
-                    }
-            in
-            ( { model
-                | scene = newScene
-                , player = newPlayer
-              }
+            ( updateWidthAndHeight scene.width scene.height model
             , Cmd.none
             )
 
         SceneResize w h ->
-            let
-                scene =
-                    model.scene
-
-                newScene =
-                    { scene
-                        | width = toFloat w - scenePadding
-                        , height = toFloat h - scenePadding
-                    }
-
-                player =
-                    model.player
-
-                newPlayer =
-                    { player
-                        | y = newScene.height - player.height
-                        , x = 0
-                    }
-            in
-            ( { model
-                | scene = newScene
-                , player = newPlayer
-              }
+            ( updateWidthAndHeight (toFloat w) (toFloat h) model
             , Cmd.none
             )
 
@@ -176,101 +130,88 @@ update msg model =
             in
             case direction of
                 Left ->
-                    let
-                        calculatedX =
-                            player.x - 20
-
-                        newX =
-                            if calculatedX <= 0 then
-                                0
-
-                            else
-                                calculatedX
-                    in
-                    ( { model | player = { player | x = newX } }, Cmd.none )
+                    ( { model
+                        | player =
+                            player
+                                |> Object.moveLeft
+                                |> Object.clampX 0 scene.width
+                      }
+                    , Cmd.none
+                    )
 
                 Right ->
-                    let
-                        calculatedX =
-                            player.x + 20
-
-                        newX =
-                            if calculatedX > scene.width - player.width then
-                                scene.width - player.width
-
-                            else
-                                calculatedX
-                    in
-                    ( { model | player = { player | x = newX } }, Cmd.none )
+                    ( { model
+                        | player =
+                            player
+                                |> Object.moveRight
+                                |> Object.clampX 0 scene.width
+                      }
+                    , Cmd.none
+                    )
 
                 Up ->
                     let
-                        newMissile =
-                            if model.missile == Nothing then
-                                Just { x = player.x + player.width / 2, y = player.y, width = 10, height = 30 }
+                        missleX =
+                            Object.midpointX player
 
-                            else
-                                model.missile
+                        missleY =
+                            Object.getY player
+
+                        missle =
+                            Object.make (Vector.make missleX missleY) Config.missleVelocity Config.missleWidth Config.missleHeight
+
+                        newMissile =
+                            model.missile |> Maybe.withDefault missle
                     in
-                    ( { model | missile = newMissile }, Cmd.none )
+                    ( { model | missile = Just newMissile }, Cmd.none )
 
                 Other ->
                     ( model, Cmd.none )
 
         Tick ->
             let
-                enemiesX =
-                    model.enemiesPos.x
-
-                enemiesY =
-                    model.enemiesPos.y
-
-                enemiesDeltaX =
-                    model.enemiesDelta.x
-
-                enemiesDeltaY =
-                    model.enemiesDelta.y
-
                 scene =
                     model.scene
 
-                newEnemiesX =
-                    enemiesX + model.enemiesDelta.x
+                newEnemies =
+                    model.enemies
+                        |> List.map Object.update
+                        |> List.indexedMap
+                            (\i e ->
+                                let
+                                    row =
+                                        i // Config.cols
 
-                newEnemiesDeltaX =
-                    if newEnemiesX > scene.width - enemiesGroupWidth || newEnemiesX < 0 then
-                        enemiesDeltaX * -1
+                                    col =
+                                        i - (row * Config.cols)
 
-                    else
-                        enemiesDeltaX
+                                    diffToSceneEnd =
+                                        (Config.cols - col) * (Config.enemySize + Config.enemiesGap) |> toFloat
 
-                correctedNewEnemiesX =
-                    if newEnemiesX > scene.width - enemiesGroupWidth then
-                        scene.width - enemiesGroupWidth
+                                    diffToSceneStart =
+                                        col * (Config.enemySize + Config.enemiesGap) |> toFloat
+                                in
+                                if Object.getX e + diffToSceneEnd > scene.width || Object.getX e - diffToSceneStart < 0 then
+                                    Object.flipX e
 
-                    else if newEnemiesX < 0 then
-                        0
-
-                    else
-                        newEnemiesX
+                                else
+                                    e
+                            )
 
                 missile =
                     model.missile
 
                 newMissile =
                     missile
-                        |> Maybe.map
-                            (\m ->
-                                { m | y = m.y - 15 }
-                            )
+                        |> Maybe.map Object.moveUp
+
+                sceneObject =
+                    Object.withWidthAndHeight Vector.zero scene.width scene.height
 
                 -- collion detection with scene
                 inScene =
                     newMissile
-                        |> Maybe.map
-                            (\m ->
-                                m.y > 0
-                            )
+                        |> Maybe.map (Object.contains sceneObject)
                         |> Maybe.withDefault False
 
                 -- collision detection with enemies
@@ -278,25 +219,10 @@ update msg model =
                     newMissile
                         |> Maybe.andThen
                             (\m ->
-                                model.enemies
+                                newEnemies
                                     |> List.indexedMap
                                         (\i e ->
-                                            if
-                                                m.x
-                                                    > e.x
-                                                    + model.enemiesPos.x
-                                                    && m.x
-                                                    < e.x
-                                                    + model.enemiesPos.x
-                                                    + e.width
-                                                    && m.y
-                                                    > e.y
-                                                    + model.enemiesPos.y
-                                                    && m.y
-                                                    < e.y
-                                                    + model.enemiesPos.y
-                                                    + e.height
-                                            then
+                                            if Object.overlaps e m && Object.isVisible e then
                                                 Just i
 
                                             else
@@ -306,15 +232,25 @@ update msg model =
                                     |> List.head
                             )
 
-                newEnemies =
+                newEnemiesFiltered =
                     case colliededEnemy of
                         Just i ->
-                            model.enemies
-                                |> List.take i
-                                |> List.append (List.drop (i + 1) model.enemies)
+                            let
+                                _ =
+                                    Debug.log "collison" i
+                            in
+                            newEnemies
+                                |> List.indexedMap
+                                    (\j e ->
+                                        if i == j then
+                                            Object.kill e
+
+                                        else
+                                            e
+                                    )
 
                         Nothing ->
-                            model.enemies
+                            newEnemies
 
                 checkedMissile =
                     if inScene && colliededEnemy == Nothing then
@@ -324,61 +260,26 @@ update msg model =
                         Nothing
             in
             ( { model
-                | enemiesPos =
-                    { x = correctedNewEnemiesX
-                    , y = enemiesY
-                    }
-                , enemiesDelta =
-                    { x = newEnemiesDeltaX
-                    , y = enemiesDeltaY
-                    }
-                , missile = checkedMissile
-                , enemies = newEnemies
+                | missile = checkedMissile
+                , enemies = newEnemiesFiltered
               }
             , Cmd.none
             )
 
 
 view : Model -> Document Msg
-view { scene, player, enemies, enemiesPos, missile } =
+view { enemies, player, missile, scene } =
     let
         enemiesRect =
             enemies
-                |> List.map
-                    (\e ->
-                        shapes [ fill Color.red ]
-                            [ rect
-                                ( e.x + enemiesPos.x
-                                , e.y + enemiesPos.y
-                                )
-                                e.width
-                                e.height
-                            ]
-                    )
+                |> List.map (Object.view Color.red)
 
         playerRect =
-            shapes [ fill Color.white ]
-                [ rect
-                    ( player.x
-                    , player.y
-                    )
-                    player.width
-                    player.height
-                ]
+            Object.view Color.blue player
 
         missileRect =
             missile
-                |> Maybe.map
-                    (\m ->
-                        shapes [ fill Color.green ]
-                            [ rect
-                                ( m.x
-                                , m.y
-                                )
-                                m.width
-                                m.height
-                            ]
-                    )
+                |> Maybe.map (Object.view Color.green)
                 |> Maybe.withDefault (shapes [] [])
 
         clearRect =
