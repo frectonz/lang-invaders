@@ -23,8 +23,8 @@ main =
 
 
 type alias Model =
-    { player : Object
-    , scene : Scene
+    { scene : Scene
+    , player : Object
     , enemies : List Object
     , missile : Maybe Object
     }
@@ -36,23 +36,41 @@ type alias Scene =
     }
 
 
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { scene = initScene
+      , player = initPlayer
+      , enemies = initEnemies
+      , missile = Nothing
+      }
+    , Task.perform GotViewPort getViewport
+    )
+
+
+initScene : Scene
+initScene =
+    { width = 0, height = 0 }
+
+
+initPlayer : Object
+initPlayer =
+    Object.withWidthAndHeight
+        Config.playerVelocity
+        Config.playerWidth
+        Config.playerHeight
+
+
 initEnemies : List Object
 initEnemies =
     List.repeat (Config.rows * Config.cols) 0
         |> List.indexedMap
             (\i _ ->
                 let
-                    row =
-                        i // Config.cols
-
-                    col =
-                        i - (row * Config.cols)
-
                     x =
-                        toFloat col * (Config.enemySize + Config.enemiesGap)
+                        toFloat (getCol i) * (Config.enemySize + Config.enemiesGap)
 
                     y =
-                        toFloat row * (Config.enemySize + Config.enemiesGap)
+                        toFloat (getRow i) * (Config.enemySize + Config.enemiesGap)
                 in
                 Object.make
                     (Vector.make x y)
@@ -62,25 +80,14 @@ initEnemies =
             )
 
 
-initPlayer : Object
-initPlayer =
-    Object.withWidthAndHeight Config.playerVelocity Config.playerWidth Config.playerHeight
+getRow : Int -> Int
+getRow i =
+    i // Config.cols
 
 
-initScene : Scene
-initScene =
-    { width = 0, height = 0 }
-
-
-init : () -> ( Model, Cmd Msg )
-init _ =
-    ( { player = initPlayer
-      , scene = initScene
-      , enemies = initEnemies
-      , missile = Nothing
-      }
-    , Task.perform GotViewPort getViewport
-    )
+getCol : Int -> Int
+getCol i =
+    i - (getRow i * Config.cols)
 
 
 type Msg
@@ -90,8 +97,80 @@ type Msg
     | Tick
 
 
-updateWidthAndHeight : Float -> Float -> Model -> Model
-updateWidthAndHeight width height model =
+handleEnemyOverflow : Float -> Int -> Object -> Object
+handleEnemyOverflow sceneWidth i e =
+    let
+        diffToSceneEnd =
+            (Config.cols - getCol i) * (Config.enemySize + Config.enemiesGap) |> toFloat
+
+        diffToSceneStart =
+            getCol i * (Config.enemySize + Config.enemiesGap) |> toFloat
+
+        rightOverflow =
+            Object.getX e + diffToSceneEnd > sceneWidth
+
+        leftOverflow =
+            Object.getX e - diffToSceneStart < 0
+    in
+    if rightOverflow || leftOverflow then
+        Object.flipX e
+
+    else
+        e
+
+
+findOverlapingEnemy : Object -> Int -> Object -> Maybe Int
+findOverlapingEnemy m i e =
+    if Object.overlaps m e && Object.isVisible e then
+        Just i
+
+    else
+        Nothing
+
+
+killEnemyAtIndex : List Object -> Int -> List Object
+killEnemyAtIndex enemies i =
+    enemies
+        |> List.indexedMap
+            (\j e ->
+                if i == j then
+                    Object.kill e
+
+                else
+                    e
+            )
+
+
+getFirstOveralpingEnemy : List Object -> Object -> Maybe Int
+getFirstOveralpingEnemy enemies m =
+    enemies
+        |> List.indexedMap (findOverlapingEnemy m)
+        |> List.filterMap identity
+        |> List.head
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        GotViewPort { scene } ->
+            ( updateScene scene.width scene.height model
+            , Cmd.none
+            )
+
+        SceneResize w h ->
+            ( updateScene (toFloat w) (toFloat h) model
+            , Cmd.none
+            )
+
+        MovePlayer direction ->
+            ( movePlayer direction model, Cmd.none )
+
+        Tick ->
+            ( tick model, Cmd.none )
+
+
+updateScene : Float -> Float -> Model -> Model
+updateScene width height model =
     let
         newScene =
             { width = width - Config.scenePadding
@@ -107,164 +186,92 @@ updateWidthAndHeight width height model =
     }
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
-update msg model =
-    case msg of
-        GotViewPort { scene } ->
-            ( updateWidthAndHeight scene.width scene.height model
-            , Cmd.none
-            )
-
-        SceneResize w h ->
-            ( updateWidthAndHeight (toFloat w) (toFloat h) model
-            , Cmd.none
-            )
-
-        MovePlayer direction ->
-            let
-                player =
+movePlayer : Direction -> Model -> Model
+movePlayer direction model =
+    case direction of
+        Left ->
+            { model
+                | player =
                     model.player
+                        |> Object.moveLeft
+                        |> Object.clampX 0 model.scene.width
+            }
 
-                scene =
-                    model.scene
-            in
-            case direction of
-                Left ->
-                    ( { model
-                        | player =
-                            player
-                                |> Object.moveLeft
-                                |> Object.clampX 0 scene.width
-                      }
-                    , Cmd.none
-                    )
+        Right ->
+            { model
+                | player =
+                    model.player
+                        |> Object.moveRight
+                        |> Object.clampX 0 model.scene.width
+            }
 
-                Right ->
-                    ( { model
-                        | player =
-                            player
-                                |> Object.moveRight
-                                |> Object.clampX 0 scene.width
-                      }
-                    , Cmd.none
-                    )
-
-                Up ->
-                    let
-                        missleX =
-                            Object.midpointX player
-
-                        missleY =
-                            Object.getY player
-
-                        missle =
-                            Object.make (Vector.make missleX missleY) Config.missleVelocity Config.missleWidth Config.missleHeight
-
-                        newMissile =
-                            model.missile |> Maybe.withDefault missle
-                    in
-                    ( { model | missile = Just newMissile }, Cmd.none )
-
-                Other ->
-                    ( model, Cmd.none )
-
-        Tick ->
+        Up ->
             let
-                scene =
-                    model.scene
+                missleY =
+                    Object.getY model.player
 
-                newEnemies =
-                    model.enemies
-                        |> List.map Object.update
-                        |> List.indexedMap
-                            (\i e ->
-                                let
-                                    row =
-                                        i // Config.cols
+                missleX =
+                    Object.midpointX model.player
 
-                                    col =
-                                        i - (row * Config.cols)
-
-                                    diffToSceneEnd =
-                                        (Config.cols - col) * (Config.enemySize + Config.enemiesGap) |> toFloat
-
-                                    diffToSceneStart =
-                                        col * (Config.enemySize + Config.enemiesGap) |> toFloat
-                                in
-                                if Object.getX e + diffToSceneEnd > scene.width || Object.getX e - diffToSceneStart < 0 then
-                                    Object.flipX e
-
-                                else
-                                    e
-                            )
-
-                missile =
-                    model.missile
+                missle =
+                    Object.make
+                        (Vector.make missleX missleY)
+                        Config.missleVelocity
+                        Config.missleWidth
+                        Config.missleHeight
 
                 newMissile =
-                    missile
-                        |> Maybe.map Object.moveUp
-
-                sceneObject =
-                    Object.withWidthAndHeight Vector.zero scene.width scene.height
-
-                -- collion detection with scene
-                inScene =
-                    newMissile
-                        |> Maybe.map (Object.contains sceneObject)
-                        |> Maybe.withDefault False
-
-                -- collision detection with enemies
-                colliededEnemy =
-                    newMissile
-                        |> Maybe.andThen
-                            (\m ->
-                                newEnemies
-                                    |> List.indexedMap
-                                        (\i e ->
-                                            if Object.overlaps e m && Object.isVisible e then
-                                                Just i
-
-                                            else
-                                                Nothing
-                                        )
-                                    |> List.filterMap identity
-                                    |> List.head
-                            )
-
-                newEnemiesFiltered =
-                    case colliededEnemy of
-                        Just i ->
-                            let
-                                _ =
-                                    Debug.log "collison" i
-                            in
-                            newEnemies
-                                |> List.indexedMap
-                                    (\j e ->
-                                        if i == j then
-                                            Object.kill e
-
-                                        else
-                                            e
-                                    )
-
-                        Nothing ->
-                            newEnemies
-
-                checkedMissile =
-                    if inScene && colliededEnemy == Nothing then
-                        newMissile
-
-                    else
-                        Nothing
+                    model.missile |> Maybe.withDefault missle
             in
-            ( { model
-                | missile = checkedMissile
-                , enemies = newEnemiesFiltered
-              }
-            , Cmd.none
-            )
+            { model | missile = Just newMissile }
+
+        Other ->
+            model
+
+
+tick : Model -> Model
+tick model =
+    let
+        sceneObject =
+            Object.withWidthAndHeight
+                Vector.zero
+                model.scene.width
+                model.scene.height
+
+        newMissile =
+            model.missile
+                |> Maybe.map Object.moveUp
+
+        inScene =
+            newMissile
+                |> Maybe.map (Object.contains sceneObject)
+                |> Maybe.withDefault False
+
+        newEnemies =
+            model.enemies
+                |> List.map Object.update
+                |> List.indexedMap (handleEnemyOverflow model.scene.width)
+
+        colliededEnemy =
+            newMissile
+                |> Maybe.andThen (getFirstOveralpingEnemy newEnemies)
+
+        newEnemiesFiltered =
+            colliededEnemy
+                |> Maybe.map (killEnemyAtIndex newEnemies)
+                |> Maybe.withDefault newEnemies
+
+        checkedMissile =
+            if inScene && colliededEnemy == Nothing then
+                newMissile
+
+            else
+                Nothing
+    in
+    { model
+        | missile = checkedMissile
+        , enemies = newEnemiesFiltered
+    }
 
 
 view : Model -> Document Msg
