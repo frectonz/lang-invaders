@@ -3,9 +3,10 @@ module Main exposing (main)
 import Browser exposing (Document)
 import Browser.Dom exposing (Viewport, getViewport)
 import Browser.Events exposing (onKeyDown, onResize)
+import Canvas exposing (clear, rect, shapes)
+import Canvas.Settings exposing (fill)
+import Color
 import Json.Decode as Decode exposing (Decoder)
-import Svg exposing (g, rect, svg)
-import Svg.Attributes exposing (fill, height, viewBox, width, x, y)
 import Task
 import Time
 
@@ -26,6 +27,7 @@ type alias Model =
     , enemies : List Object
     , enemiesPos : { x : Float, y : Float }
     , enemiesDelta : { x : Float, y : Float }
+    , missile : Maybe Object
     }
 
 
@@ -90,7 +92,8 @@ init _ =
                         }
                     )
       , enemiesPos = { x = 0, y = 0 }
-      , enemiesDelta = { x = 20, y = 20 }
+      , enemiesDelta = { x = 5, y = 5 }
+      , missile = Nothing
       }
     , Task.perform GotViewPort getViewport
     )
@@ -201,6 +204,9 @@ update msg model =
                     in
                     ( { model | player = { player | x = newX } }, Cmd.none )
 
+                Up ->
+                    ( model, Cmd.none )
+
                 Other ->
                     ( model, Cmd.none )
 
@@ -230,10 +236,20 @@ update msg model =
 
                     else
                         enemiesDeltaX
+
+                correctedNewEnemiesX =
+                    if newEnemiesX > scene.width - enemiesGroupWidth then
+                        scene.width - enemiesGroupWidth
+
+                    else if newEnemiesX < 0 then
+                        0
+
+                    else
+                        newEnemiesX
             in
             ( { model
                 | enemiesPos =
-                    { x = newEnemiesX
+                    { x = correctedNewEnemiesX
                     , y = enemiesY
                     }
                 , enemiesDelta =
@@ -247,37 +263,37 @@ update msg model =
 
 view : Model -> Document Msg
 view { scene, player, enemies, enemiesPos } =
+    let
+        enemiesRect =
+            enemies
+                |> List.map
+                    (\e ->
+                        shapes [ fill Color.red ]
+                            [ rect
+                                ( e.x + enemiesPos.x
+                                , e.y + enemiesPos.y
+                                )
+                                e.width
+                                e.height
+                            ]
+                    )
+
+        playerRect =
+            shapes [ fill Color.white ]
+                [ rect
+                    ( player.x
+                    , player.y
+                    )
+                    player.width
+                    player.height
+                ]
+
+        clearRect =
+            clear ( 0, 0 ) scene.width scene.height
+    in
     { title = "Lang Invaders"
     , body =
-        [ svg
-            [ width (String.fromFloat scene.width)
-            , height (String.fromFloat scene.height)
-            , viewBox ("0 0 " ++ String.fromFloat scene.width ++ " " ++ String.fromFloat scene.height)
-            ]
-            [ g
-                []
-                (enemies
-                    |> List.map
-                        (\e ->
-                            rect
-                                [ e.x + enemiesPos.x |> String.fromFloat |> x
-                                , e.y + enemiesPos.y |> String.fromFloat |> y
-                                , e.width |> String.fromFloat |> width
-                                , e.height |> String.fromFloat |> height
-                                , fill "red"
-                                ]
-                                []
-                        )
-                )
-            , rect
-                [ player.x |> String.fromFloat |> x
-                , player.y |> String.fromFloat |> y
-                , player.width |> String.fromFloat |> width
-                , player.height |> String.fromFloat |> height
-                , fill "white"
-                ]
-                []
-            ]
+        [ Canvas.toHtml ( scene.width |> floor, scene.height |> floor ) [] (clearRect :: playerRect :: enemiesRect)
         ]
     }
 
@@ -286,6 +302,7 @@ type Direction
     = Left
     | Right
     | Other
+    | Up
 
 
 keyDecoder : Decoder Direction
@@ -301,6 +318,9 @@ toDirection string =
 
         "ArrowRight" ->
             Right
+
+        "ArrowUp" ->
+            Up
 
         _ ->
             Other
