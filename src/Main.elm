@@ -2,13 +2,12 @@ module Main exposing (main)
 
 import Browser exposing (Document)
 import Browser.Dom exposing (Viewport, getViewport)
-import Browser.Events exposing (onKeyDown, onResize)
+import Browser.Events exposing (onAnimationFrame, onKeyDown, onResize)
 import Canvas exposing (clear, rect, shapes)
 import Canvas.Settings exposing (fill)
 import Color
 import Json.Decode as Decode exposing (Decoder)
 import Task
-import Time
 
 
 main : Program () Model Msg
@@ -427,5 +426,5 @@ subscriptions _ =
     Sub.batch
         [ onResize SceneResize
         , onKeyDown keyDecoder |> Sub.map MovePlayer
-        , Time.every 10 (\_ -> Tick)
+        , onAnimationFrame (\_ -> Tick)
         ]
