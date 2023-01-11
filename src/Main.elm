@@ -47,7 +47,7 @@ type alias Scene =
 
 enemiesGap : Float
 enemiesGap =
-    10
+    20
 
 
 enemySize : Float
@@ -92,7 +92,7 @@ init _ =
                         }
                     )
       , enemiesPos = { x = 0, y = 0 }
-      , enemiesDelta = { x = 5, y = 5 }
+      , enemiesDelta = { x = 1, y = 1 }
       , missile = Nothing
       }
     , Task.perform GotViewPort getViewport
@@ -104,7 +104,7 @@ type Msg
     | GotViewPort Viewport
     | SceneResize Int Int
     | MovePlayer Direction
-    | MoveEnemies Time.Posix
+    | Tick
 
 
 scenePadding : Float
@@ -179,7 +179,7 @@ update msg model =
                 Left ->
                     let
                         calculatedX =
-                            player.x - 10
+                            player.x - 20
 
                         newX =
                             if calculatedX <= 0 then
@@ -193,7 +193,7 @@ update msg model =
                 Right ->
                     let
                         calculatedX =
-                            player.x + 10
+                            player.x + 20
 
                         newX =
                             if calculatedX > scene.width - player.width then
@@ -205,12 +205,20 @@ update msg model =
                     ( { model | player = { player | x = newX } }, Cmd.none )
 
                 Up ->
-                    ( model, Cmd.none )
+                    let
+                        newMissile =
+                            if model.missile == Nothing then
+                                Just { x = player.x + player.width / 2, y = player.y, width = 10, height = 30 }
+
+                            else
+                                model.missile
+                    in
+                    ( { model | missile = newMissile }, Cmd.none )
 
                 Other ->
                     ( model, Cmd.none )
 
-        MoveEnemies _ ->
+        Tick ->
             let
                 enemiesX =
                     model.enemiesPos.x
@@ -246,6 +254,75 @@ update msg model =
 
                     else
                         newEnemiesX
+
+                missile =
+                    model.missile
+
+                newMissile =
+                    missile
+                        |> Maybe.map
+                            (\m ->
+                                { m | y = m.y - 15 }
+                            )
+
+                -- collion detection with scene
+                inScene =
+                    newMissile
+                        |> Maybe.map
+                            (\m ->
+                                m.y > 0
+                            )
+                        |> Maybe.withDefault False
+
+                -- collision detection with enemies
+                colliededEnemy =
+                    newMissile
+                        |> Maybe.andThen
+                            (\m ->
+                                model.enemies
+                                    |> List.indexedMap
+                                        (\i e ->
+                                            if
+                                                m.x
+                                                    > e.x
+                                                    + model.enemiesPos.x
+                                                    && m.x
+                                                    < e.x
+                                                    + model.enemiesPos.x
+                                                    + e.width
+                                                    && m.y
+                                                    > e.y
+                                                    + model.enemiesPos.y
+                                                    && m.y
+                                                    < e.y
+                                                    + model.enemiesPos.y
+                                                    + e.height
+                                            then
+                                                Just i
+
+                                            else
+                                                Nothing
+                                        )
+                                    |> List.filterMap identity
+                                    |> List.head
+                            )
+
+                newEnemies =
+                    case colliededEnemy of
+                        Just i ->
+                            model.enemies
+                                |> List.take i
+                                |> List.append (List.drop (i + 1) model.enemies)
+
+                        Nothing ->
+                            model.enemies
+
+                checkedMissile =
+                    if inScene && colliededEnemy == Nothing then
+                        newMissile
+
+                    else
+                        Nothing
             in
             ( { model
                 | enemiesPos =
@@ -256,13 +333,15 @@ update msg model =
                     { x = newEnemiesDeltaX
                     , y = enemiesDeltaY
                     }
+                , missile = checkedMissile
+                , enemies = newEnemies
               }
             , Cmd.none
             )
 
 
 view : Model -> Document Msg
-view { scene, player, enemies, enemiesPos } =
+view { scene, player, enemies, enemiesPos, missile } =
     let
         enemiesRect =
             enemies
@@ -288,12 +367,29 @@ view { scene, player, enemies, enemiesPos } =
                     player.height
                 ]
 
+        missileRect =
+            missile
+                |> Maybe.map
+                    (\m ->
+                        shapes [ fill Color.green ]
+                            [ rect
+                                ( m.x
+                                , m.y
+                                )
+                                m.width
+                                m.height
+                            ]
+                    )
+                |> Maybe.withDefault (shapes [] [])
+
         clearRect =
             clear ( 0, 0 ) scene.width scene.height
     in
     { title = "Lang Invaders"
     , body =
-        [ Canvas.toHtml ( scene.width |> floor, scene.height |> floor ) [] (clearRect :: playerRect :: enemiesRect)
+        [ Canvas.toHtml ( scene.width |> floor, scene.height |> floor )
+            []
+            (clearRect :: missileRect :: playerRect :: enemiesRect)
         ]
     }
 
@@ -331,5 +427,5 @@ subscriptions _ =
     Sub.batch
         [ onResize SceneResize
         , onKeyDown keyDecoder |> Sub.map MovePlayer
-        , Time.every 100 MoveEnemies
+        , Time.every 10 (\_ -> Tick)
         ]
