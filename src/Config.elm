@@ -48,9 +48,9 @@ missleHeight =
     40
 
 
-scenePadding : number
+scenePadding : { x : number, y : number }
 scenePadding =
-    100
+    { x = 800, y = 100 }
 
 
 playerVelocity : Vector.Vector

@@ -246,8 +246,8 @@ updateScene : Float -> Float -> Model -> Model
 updateScene width height model =
     let
         newScene =
-            { width = width - Config.scenePadding
-            , height = height - Config.scenePadding
+            { width = width - Config.scenePadding.x
+            , height = height - Config.scenePadding.y
             }
 
         newPlayerPos =
