@@ -2,11 +2,11 @@ module Main exposing (main)
 
 import Browser exposing (Document)
 import Browser.Dom exposing (Viewport, getViewport)
-import Browser.Events exposing (onAnimationFrame, onKeyDown, onResize)
-import Canvas exposing (clear, shapes)
+import Browser.Events exposing (onAnimationFrame, onResize)
+import Canvas exposing (Renderable, clear, shapes)
 import Color
 import Config
-import Json.Decode as Decode exposing (Decoder)
+import KeyDecoder exposing (Direction(..), handleKeyDown)
 import Object exposing (Object)
 import Task
 import Vector
@@ -63,21 +63,31 @@ initPlayer =
 initEnemies : List Object
 initEnemies =
     List.repeat (Config.rows * Config.cols) 0
-        |> List.indexedMap
-            (\i _ ->
-                let
-                    x =
-                        toFloat (getCol i) * (Config.enemySize + Config.enemiesGap)
+        |> List.indexedMap (first initEnemy)
 
-                    y =
-                        toFloat (getRow i) * (Config.enemySize + Config.enemiesGap)
-                in
-                Object.make
-                    (Vector.make x y)
-                    Config.enemyVelocity
-                    Config.enemySize
-                    Config.enemySize
-            )
+
+first : (a -> b) -> a -> c -> b
+first f a _ =
+    f a
+
+
+initEnemy : Int -> Object
+initEnemy i =
+    Object.make
+        (Vector.make (getX i) (getY i))
+        Config.enemyVelocity
+        Config.enemySize
+        Config.enemySize
+
+
+getX : Int -> Float
+getX i =
+    toFloat (getCol i) * (Config.enemySize + Config.enemiesGap)
+
+
+getY : Int -> Float
+getY i =
+    toFloat (getRow i) * (Config.enemySize + Config.enemiesGap)
 
 
 getRow : Int -> Int
@@ -274,65 +284,48 @@ tick model =
     }
 
 
-view : Model -> Document Msg
-view { enemies, player, missile, scene } =
-    let
-        enemiesRect =
-            enemies
-                |> List.map (Object.view Color.red)
-
-        playerRect =
-            Object.view Color.blue player
-
-        missileRect =
-            missile
-                |> Maybe.map (Object.view Color.green)
-                |> Maybe.withDefault (shapes [] [])
-
-        clearRect =
-            clear ( 0, 0 ) scene.width scene.height
-    in
-    { title = "Lang Invaders"
-    , body =
-        [ Canvas.toHtml ( scene.width |> floor, scene.height |> floor )
-            []
-            (clearRect :: missileRect :: playerRect :: enemiesRect)
-        ]
-    }
-
-
-type Direction
-    = Left
-    | Right
-    | Other
-    | Up
-
-
-keyDecoder : Decoder Direction
-keyDecoder =
-    Decode.map toDirection (Decode.field "key" Decode.string)
-
-
-toDirection : String -> Direction
-toDirection string =
-    case string of
-        "ArrowLeft" ->
-            Left
-
-        "ArrowRight" ->
-            Right
-
-        "ArrowUp" ->
-            Up
-
-        _ ->
-            Other
-
-
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.batch
         [ onResize SceneResize
-        , onKeyDown keyDecoder |> Sub.map MovePlayer
+        , handleKeyDown |> Sub.map MovePlayer
         , onAnimationFrame (\_ -> Tick)
         ]
+
+
+view : Model -> Document Msg
+view { enemies, player, missile, scene } =
+    { title = "Lang Invaders"
+    , body =
+        [ Canvas.toHtml ( scene.width |> floor, scene.height |> floor )
+            []
+            (clearScene scene.width scene.height
+                :: viewMissle missile
+                :: viewPlayer player
+                :: viewEnemies enemies
+            )
+        ]
+    }
+
+
+clearScene : Float -> Float -> Renderable
+clearScene w h =
+    clear ( 0, 0 ) w h
+
+
+viewMissle : Maybe Object -> Renderable
+viewMissle missile =
+    missile
+        |> Maybe.map (Object.view Color.green)
+        |> Maybe.withDefault (shapes [] [])
+
+
+viewEnemies : List Object -> List Renderable
+viewEnemies enemies =
+    enemies
+        |> List.map (Object.view Color.red)
+
+
+viewPlayer : Object -> Renderable
+viewPlayer player =
+    Object.view Color.blue player
