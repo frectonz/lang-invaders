@@ -40,12 +40,12 @@ playerHeight =
 
 missleWidth : number
 missleWidth =
-    10
+    35
 
 
 missleHeight : number
 missleHeight =
-    30
+    40
 
 
 scenePadding : number
@@ -60,7 +60,7 @@ playerVelocity =
 
 enemyVelocity : Vector.Vector
 enemyVelocity =
-    Vector.make 5 0
+    Vector.make 3 0
 
 
 missleVelocity : Vector.Vector

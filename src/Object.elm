@@ -1,7 +1,8 @@
 module Object exposing (..)
 
-import Canvas exposing (Renderable, rect, shapes)
+import Canvas exposing (Renderable, rect, shapes, texture)
 import Canvas.Settings exposing (fill)
+import Canvas.Texture exposing (Texture)
 import Color exposing (Color)
 import Vector exposing (Vector)
 
@@ -103,17 +104,23 @@ isVisible (Object r) =
 
 view : Color -> Object -> Renderable
 view fillColor (Object o) =
-    shapes
-        [ fill
-            (if o.visible then
-                fillColor
+    if o.visible then
+        shapes
+            [ fill fillColor ]
+            [ rect
+                ( Vector.getX o.pos, Vector.getY o.pos )
+                o.width
+                o.height
+            ]
 
-             else
-                Color.rgba 0 0 0 0
-            )
-        ]
-        [ rect
-            ( Vector.getX o.pos, Vector.getY o.pos )
-            o.width
-            o.height
-        ]
+    else
+        shapes [] []
+
+
+viewSprite : Texture -> Object -> Renderable
+viewSprite t (Object o) =
+    if o.visible then
+        texture [] ( Vector.getX o.pos, Vector.getY o.pos ) t
+
+    else
+        shapes [] []

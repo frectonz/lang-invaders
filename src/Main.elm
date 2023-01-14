@@ -4,6 +4,7 @@ import Browser exposing (Document)
 import Browser.Dom exposing (Viewport, getViewport)
 import Browser.Events exposing (onAnimationFrame, onResize)
 import Canvas exposing (Renderable, clear, shapes)
+import Canvas.Texture exposing (Texture, loadFromImageUrl)
 import Color
 import Config
 import KeyDecoder exposing (Direction(..), handleKeyDown)
@@ -26,7 +27,8 @@ type alias Model =
     { scene : Scene
     , player : Object
     , enemies : List Object
-    , missile : Maybe Object
+    , missle : Maybe Object
+    , sprites : Sprites
     }
 
 
@@ -36,12 +38,26 @@ type alias Scene =
     }
 
 
+type alias Sprites =
+    { javascript : Load Texture
+    , python : Load Texture
+    , missle : Load Texture
+    }
+
+
+type Load a
+    = Loading
+    | Failure
+    | Success a
+
+
 init : () -> ( Model, Cmd Msg )
 init _ =
     ( { scene = initScene
       , player = initPlayer
       , enemies = initEnemies
-      , missile = Nothing
+      , missle = Nothing
+      , sprites = initSprites
       }
     , Task.perform GotViewPort getViewport
     )
@@ -80,6 +96,14 @@ initEnemy i =
         Config.enemySize
 
 
+initSprites : Sprites
+initSprites =
+    { javascript = Loading
+    , python = Loading
+    , missle = Loading
+    }
+
+
 getX : Int -> Float
 getX i =
     toFloat (getCol i) * (Config.enemySize + Config.enemiesGap)
@@ -101,10 +125,17 @@ getCol i =
 
 
 type Msg
-    = GotViewPort Viewport
+    = TextureLoaded TextureType (Maybe Texture)
+    | GotViewPort Viewport
     | SceneResize Int Int
     | MovePlayer Direction
     | Tick
+
+
+type TextureType
+    = JavaScript
+    | Python
+    | Missle
 
 
 handleEnemyOverflow : Float -> Int -> Object -> Object
@@ -162,6 +193,11 @@ getFirstOveralpingEnemy enemies m =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        TextureLoaded textureType maybeTexture ->
+            ( updateTexture textureType maybeTexture model
+            , Cmd.none
+            )
+
         GotViewPort { scene } ->
             ( updateScene scene.width scene.height model
             , Cmd.none
@@ -177,6 +213,33 @@ update msg model =
 
         Tick ->
             ( tick model, Cmd.none )
+
+
+updateTexture : TextureType -> Maybe Texture -> Model -> Model
+updateTexture textureType maybeTexture model =
+    let
+        sprites =
+            model.sprites
+    in
+    case textureType of
+        JavaScript ->
+            { model | sprites = { sprites | javascript = handleTextureLoad maybeTexture } }
+
+        Python ->
+            { model | sprites = { sprites | python = handleTextureLoad maybeTexture } }
+
+        Missle ->
+            { model | sprites = { sprites | missle = handleTextureLoad maybeTexture } }
+
+
+handleTextureLoad : Maybe Texture -> Load Texture
+handleTextureLoad maybeTexture =
+    case maybeTexture of
+        Just texture ->
+            Success texture
+
+        Nothing ->
+            Failure
 
 
 updateScene : Float -> Float -> Model -> Model
@@ -221,7 +284,7 @@ movePlayer direction model =
                     Object.getY model.player
 
                 missleX =
-                    Object.midpointX model.player
+                    Object.midpointX model.player - Config.missleWidth / 2
 
                 missle =
                     Object.make
@@ -230,10 +293,10 @@ movePlayer direction model =
                         Config.missleWidth
                         Config.missleHeight
 
-                newMissile =
-                    model.missile |> Maybe.withDefault missle
+                newMissle =
+                    model.missle |> Maybe.withDefault missle
             in
-            { model | missile = Just newMissile }
+            { model | missle = Just newMissle }
 
         Other ->
             model
@@ -248,12 +311,12 @@ tick model =
                 model.scene.width
                 model.scene.height
 
-        newMissile =
-            model.missile
+        newMissle =
+            model.missle
                 |> Maybe.map Object.moveUp
 
         inScene =
-            newMissile
+            newMissle
                 |> Maybe.map (Object.contains sceneObject)
                 |> Maybe.withDefault False
 
@@ -263,7 +326,7 @@ tick model =
                 |> List.indexedMap (handleEnemyOverflow model.scene.width)
 
         colliededEnemy =
-            newMissile
+            newMissle
                 |> Maybe.andThen (getFirstOveralpingEnemy newEnemies)
 
         newEnemiesFiltered =
@@ -271,15 +334,15 @@ tick model =
                 |> Maybe.map (killEnemyAtIndex newEnemies)
                 |> Maybe.withDefault newEnemies
 
-        checkedMissile =
+        checkedMissle =
             if inScene && colliededEnemy == Nothing then
-                newMissile
+                newMissle
 
             else
                 Nothing
     in
     { model
-        | missile = checkedMissile
+        | missle = checkedMissle
         , enemies = newEnemiesFiltered
     }
 
@@ -294,15 +357,23 @@ subscriptions _ =
 
 
 view : Model -> Document Msg
-view { enemies, player, missile, scene } =
+view { enemies, player, missle, scene, sprites } =
     { title = "Lang Invaders"
     , body =
-        [ Canvas.toHtml ( scene.width |> floor, scene.height |> floor )
+        [ Canvas.toHtmlWith
+            { width = floor scene.width
+            , height = floor scene.height
+            , textures =
+                [ loadFromImageUrl "./js.jpg" (TextureLoaded JavaScript)
+                , loadFromImageUrl "./python.png" (TextureLoaded Python)
+                , loadFromImageUrl "./missle.png" (TextureLoaded Missle)
+                ]
+            }
             []
             (clearScene scene.width scene.height
-                :: viewMissle missile
+                :: viewMissle sprites.missle missle
                 :: viewPlayer player
-                :: viewEnemies enemies
+                :: viewEnemies sprites.javascript enemies
             )
         ]
     }
@@ -313,17 +384,29 @@ clearScene w h =
     clear ( 0, 0 ) w h
 
 
-viewMissle : Maybe Object -> Renderable
-viewMissle missile =
-    missile
-        |> Maybe.map (Object.view Color.green)
-        |> Maybe.withDefault (shapes [] [])
+viewMissle : Load Texture -> Maybe Object -> Renderable
+viewMissle s missle =
+    case s of
+        Success sprite ->
+            missle
+                |> Maybe.map (Object.viewSprite sprite)
+                |> Maybe.withDefault (shapes [] [])
+
+        _ ->
+            missle
+                |> Maybe.map (Object.view Color.green)
+                |> Maybe.withDefault (shapes [] [])
 
 
-viewEnemies : List Object -> List Renderable
-viewEnemies enemies =
-    enemies
-        |> List.map (Object.view Color.red)
+viewEnemies : Load Texture -> List Object -> List Renderable
+viewEnemies s enemies =
+    case s of
+        Success sprite ->
+            enemies
+                |> List.map (Object.viewSprite sprite)
+
+        _ ->
+            []
 
 
 viewPlayer : Object -> Renderable
