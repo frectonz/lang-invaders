@@ -1,7 +1,4 @@
-@font-face {
-    font-family: myFirstFont;
-    src: url(font.ttf);
-}
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
 
 * {
   margin: 0;
@@ -14,7 +11,7 @@ body {
 
   display: grid;
   place-items: center;
-  font-family: myFirstFont;
+  font-family: 'Press Start 2P', cursive;
 }
 
 .container {
@@ -46,6 +43,7 @@ body {
 button {
   background: none;
   border: none;
+  font-family: 'Press Start 2P', cursive;
 }
 
 .button {
@@ -64,7 +62,6 @@ button {
   padding: 1rem 2rem;
   font-size: 2rem;
   margin: 4rem 0;
-  font-family: myFirstFont;
   background: white;
   cursor: pointer;
 }
