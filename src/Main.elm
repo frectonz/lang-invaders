@@ -7,6 +7,9 @@ import Canvas exposing (Renderable, clear, shapes)
 import Canvas.Texture exposing (Texture, loadFromImageUrl)
 import Color
 import Config
+import Html exposing (Html, button, div, h1, img, p, text)
+import Html.Attributes exposing (class, src)
+import Html.Events exposing (onClick)
 import KeyDecoder exposing (Direction(..), handleKeyDown)
 import Object exposing (Object)
 import Task
@@ -23,12 +26,24 @@ main =
         }
 
 
-type alias Model =
+type Model
+    = Start Language
+    | Playing Game
+    | Paused
+
+
+type Language
+    = Python
+    | JavaScript
+
+
+type alias Game =
     { scene : Scene
     , player : Object
     , enemies : List Object
     , missle : Maybe Object
     , sprites : Sprites
+    , enemyType : Language
     }
 
 
@@ -53,14 +68,20 @@ type Load a
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { scene = initScene
-      , player = initPlayer
-      , enemies = initEnemies
-      , missle = Nothing
-      , sprites = initSprites
-      }
-    , Task.perform GotViewPort getViewport
+    ( Start JavaScript
+    , Cmd.none
     )
+
+
+initGame : Language -> Game
+initGame lang =
+    { scene = initScene
+    , player = initPlayer
+    , enemies = initEnemies
+    , missle = Nothing
+    , sprites = initSprites
+    , enemyType = lang
+    }
 
 
 initScene : Scene
@@ -129,13 +150,15 @@ type Msg
     | GotViewPort Viewport
     | SceneResize Int Int
     | MovePlayer Direction
+    | SelectLanguage Language
+    | StartGame
     | Tick
 
 
 type TextureType
-    = JavaScript
-    | Python
-    | Missle
+    = JavaScriptTexture
+    | PythonTexture
+    | MissleTexture
 
 
 handleEnemyOverflow : Float -> Int -> Object -> Object
@@ -192,6 +215,27 @@ getFirstOveralpingEnemy enemies m =
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
+    case model of
+        Start lang ->
+            case msg of
+                SelectLanguage newLang ->
+                    ( Start newLang, Cmd.none )
+
+                StartGame ->
+                    ( Playing (initGame lang), Task.perform GotViewPort getViewport )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Paused ->
+            ( model, Cmd.none )
+
+        Playing game ->
+            updateGame msg game |> Tuple.mapFirst Playing
+
+
+updateGame : Msg -> Game -> ( Game, Cmd Msg )
+updateGame msg model =
     case msg of
         TextureLoaded textureType maybeTexture ->
             ( updateTexture textureType maybeTexture model
@@ -214,21 +258,24 @@ update msg model =
         Tick ->
             ( tick model, Cmd.none )
 
+        _ ->
+            ( model, Cmd.none )
 
-updateTexture : TextureType -> Maybe Texture -> Model -> Model
+
+updateTexture : TextureType -> Maybe Texture -> Game -> Game
 updateTexture textureType maybeTexture model =
     let
         sprites =
             model.sprites
     in
     case textureType of
-        JavaScript ->
+        JavaScriptTexture ->
             { model | sprites = { sprites | javascript = handleTextureLoad maybeTexture } }
 
-        Python ->
+        PythonTexture ->
             { model | sprites = { sprites | python = handleTextureLoad maybeTexture } }
 
-        Missle ->
+        MissleTexture ->
             { model | sprites = { sprites | missle = handleTextureLoad maybeTexture } }
 
 
@@ -242,7 +289,7 @@ handleTextureLoad maybeTexture =
             Failure
 
 
-updateScene : Float -> Float -> Model -> Model
+updateScene : Float -> Float -> Game -> Game
 updateScene width height model =
     let
         newScene =
@@ -259,7 +306,7 @@ updateScene width height model =
     }
 
 
-movePlayer : Direction -> Model -> Model
+movePlayer : Direction -> Game -> Game
 movePlayer direction model =
     case direction of
         Left ->
@@ -302,7 +349,7 @@ movePlayer direction model =
             model
 
 
-tick : Model -> Model
+tick : Game -> Game
 tick model =
     let
         sceneObject =
@@ -347,8 +394,8 @@ tick model =
     }
 
 
-subscriptions : Model -> Sub Msg
-subscriptions _ =
+subscriptionsGame : Game -> Sub Msg
+subscriptionsGame _ =
     Sub.batch
         [ onResize SceneResize
         , handleKeyDown |> Sub.map MovePlayer
@@ -356,27 +403,92 @@ subscriptions _ =
         ]
 
 
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model of
+        Start _ ->
+            Sub.none
+
+        Paused ->
+            Sub.none
+
+        Playing game ->
+            subscriptionsGame game
+
+
 view : Model -> Document Msg
-view { enemies, player, missle, scene, sprites } =
+view model =
     { title = "Lang Invaders"
     , body =
-        [ Canvas.toHtmlWith
-            { width = floor scene.width
-            , height = floor scene.height
-            , textures =
-                [ loadFromImageUrl "./js.jpg" (TextureLoaded JavaScript)
-                , loadFromImageUrl "./python.png" (TextureLoaded Python)
-                , loadFromImageUrl "./missle.png" (TextureLoaded Missle)
-                ]
-            }
-            []
-            (clearScene scene.width scene.height
-                :: viewMissle sprites.missle missle
-                :: viewPlayer player
-                :: viewEnemies sprites.javascript enemies
-            )
-        ]
+        case model of
+            Start lang ->
+                [ viewStart lang ]
+
+            Paused ->
+                []
+
+            Playing game ->
+                [ viewGame game ]
     }
+
+
+activeIf : Language -> Language -> String
+activeIf lang1 lang2 =
+    if lang1 == lang2 then
+        "active"
+
+    else
+        ""
+
+
+viewStart : Language -> Html Msg
+viewStart lang =
+    div [ class "container" ]
+        [ h1 [ class "title" ] [ text "Lang Invaders" ]
+        , p [ class "detail" ] [ text "Choose a language to Kill" ]
+        , div [ class "buttons" ]
+            [ button
+                [ class ("button " ++ activeIf lang JavaScript)
+                , onClick (SelectLanguage JavaScript)
+                ]
+                [ img [ src "./js.jpg" ] [] ]
+            , button
+                [ class ("button " ++ activeIf lang Python)
+                , onClick (SelectLanguage Python)
+                ]
+                [ img [ src "./python.png" ] [] ]
+            ]
+        , button [ class "start", onClick StartGame ] [ text "START" ]
+        ]
+
+
+viewGame : Game -> Html Msg
+viewGame { enemies, player, missle, scene, sprites, enemyType } =
+    Canvas.toHtmlWith
+        { width = floor scene.width
+        , height = floor scene.height
+        , textures =
+            [ loadFromImageUrl "./js.jpg" (TextureLoaded JavaScriptTexture)
+            , loadFromImageUrl "./python.png" (TextureLoaded PythonTexture)
+            , loadFromImageUrl "./missle.png" (TextureLoaded MissleTexture)
+            ]
+        }
+        []
+        (clearScene scene.width scene.height
+            :: viewMissle sprites.missle missle
+            :: viewPlayer player
+            :: viewEnemies (getSprite enemyType sprites) enemies
+        )
+
+
+getSprite : Language -> Sprites -> Load Texture
+getSprite lang sprites =
+    case lang of
+        JavaScript ->
+            sprites.javascript
+
+        Python ->
+            sprites.python
 
 
 clearScene : Float -> Float -> Renderable

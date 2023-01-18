@@ -19,7 +19,5 @@ A space invaders clone written in [Elm](http://elm-lang.org/). The twist is that
   - on collision
   - on shooting
 - Add a game over screen
-- Add a start screen
-  - The user will choose the language to kill 😂
 - Score Display
 - More languages
